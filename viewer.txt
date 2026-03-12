@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pencarian Arsip</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background: #0f1117; color: #e8eaf6;
+  min-height: 100vh; font-size: 14px; line-height: 1.6;
+}
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(79,142,247,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(79,142,247,.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ===== TOPBAR ===== */
+.topbar {
+  background: #1a1d27; border-bottom: 1px solid #2e3250;
+  padding: 0 24px; height: 60px;
+  display: flex; align-items: center; gap: 14px;
+  position: sticky; top: 0; z-index: 50;
+}
+.brand-icon {
+  width: 36px; height: 36px; border-radius: 9px; flex-shrink: 0;
+  background: linear-gradient(135deg, #4f8ef7, #7c4dff);
+  display: grid; place-items: center; font-size: 16px;
+}
+.brand-name { font-size: 15px; font-weight: 800; flex: 1; }
+.viewer-badge {
+  background: rgba(100,116,139,.15); color: #8892b0;
+  font-size: 11px; font-weight: 700; padding: 4px 12px;
+  border-radius: 20px; border: 1px solid rgba(100,116,139,.2);
+}
+.user-chip {
+  display: flex; align-items: center; gap: 8px;
+  background: #22253a; border: 1px solid #2e3250;
+  border-radius: 20px; padding: 5px 12px 5px 6px;
+}
+.user-av {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: linear-gradient(135deg, #4f8ef7, #7c4dff);
+  display: grid; place-items: center; font-size: 12px; font-weight: 700;
+}
+.user-nm { font-size: 12px; font-weight: 600; }
+
+/* ===== MAIN ===== */
+.main { max-width: 900px; margin: 0 auto; padding: 32px 20px; position: relative; z-index: 1; }
+
+.hero { text-align: center; margin-bottom: 36px; }
+.hero h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; }
+.hero h1 span { color: #4f8ef7; }
+.hero p { color: #8892b0; font-size: 15px; }
+
+/* ===== SEARCH BOX ===== */
+.search-card {
+  background: #1a1d27; border: 1px solid #2e3250;
+  border-radius: 16px; padding: 28px; margin-bottom: 24px;
+}
+.search-wrap {
+  display: flex; align-items: center;
+  background: #22253a; border: 1px solid #2e3250;
+  border-radius: 12px; padding: 4px 4px 4px 18px;
+  margin-bottom: 16px; transition: border-color .2s;
+}
+.search-wrap:focus-within { border-color: #4f8ef7; }
+.search-wrap i { color: #8892b0; font-size: 16px; flex-shrink: 0; }
+.search-input {
+  border: none; background: transparent; flex: 1;
+  padding: 11px 14px; font-size: 15px; color: #e8eaf6;
+  font-family: inherit; outline: none;
+}
+.search-input::placeholder { color: #8892b0; }
+.btn-search {
+  background: linear-gradient(135deg, #4f8ef7, #7c4dff);
+  border: none; color: white; padding: 11px 24px;
+  border-radius: 9px; font-weight: 700; font-size: 14px;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+  transition: opacity .2s;
+}
+.btn-search:hover { opacity: .88; }
+
+.filters { display: flex; gap: 10px; flex-wrap: wrap; }
+.filter-sel {
+  font-family: inherit; font-size: 13px; color: #e8eaf6;
+  background: #22253a; border: 1px solid #2e3250;
+  border-radius: 8px; padding: 8px 12px;
+  outline: none; cursor: pointer; transition: border-color .2s;
+}
+.filter-sel:focus { border-color: #4f8ef7; }
+.filter-sel option { background: #1a1d27; }
+
+/* ===== NOTICE ===== */
+.notice {
+  background: rgba(79,142,247,.07); border: 1px solid rgba(79,142,247,.18);
+  border-radius: 10px; padding: 12px 16px; margin-bottom: 20px;
+  display: flex; gap: 10px; align-items: center;
+  font-size: 13px; color: #8892b0;
+}
+.notice i { color: #4f8ef7; flex-shrink: 0; }
+.notice strong { color: #c8d0f0; }
+
+/* ===== RESULTS ===== */
+.result-meta { font-size: 13px; color: #8892b0; margin-bottom: 12px; }
+.result-meta strong { color: #e8eaf6; }
+
+.result-card {
+  background: #1a1d27; border: 1px solid #2e3250;
+  border-radius: 12px; overflow: hidden; margin-bottom: 12px;
+  transition: border-color .2s, transform .15s;
+}
+.result-card:hover { border-color: #4a5268; transform: translateY(-1px); }
+
+.result-body { padding: 18px 20px; }
+.result-top {
+  display: flex; justify-content: space-between;
+  align-items: flex-start; gap: 12px;
+}
+.result-info { flex: 1; }
+.result-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.badge {
+  display: inline-block; padding: 3px 10px;
+  border-radius: 20px; font-size: 11px; font-weight: 600;
+}
+.b-masuk  { background: rgba(79,142,247,.14);  color: #4f8ef7; }
+.b-keluar { background: rgba(124,77,255,.14);   color: #a78bfa; }
+.b-other  { background: rgba(100,116,139,.14);  color: #8892b0; }
+.b-aktif  { background: rgba(34,197,94,.14);    color: #22c55e; }
+.b-arsip  { background: rgba(245,158,11,.14);   color: #f59e0b; }
+.b-id {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: #4f8ef7;
+  background: rgba(79,142,247,.1);
+  padding: 3px 8px; border-radius: 4px;
+}
+
+.result-title { font-size: 16px; font-weight: 700; margin-bottom: 5px; }
+.result-perihal { font-size: 13px; color: #8892b0; margin-bottom: 8px; }
+.result-meta-row {
+  display: flex; gap: 14px; flex-wrap: wrap;
+  font-size: 12px; color: #8892b0;
+}
+.result-meta-row span { display: flex; align-items: center; gap: 5px; }
+
+.result-actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.btn-detail {
+  background: #22253a; border: 1px solid #2e3250;
+  color: #8892b0; padding: 8px 14px; border-radius: 8px;
+  font-size: 13px; font-family: inherit; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+  transition: all .2s; white-space: nowrap;
+}
+.btn-detail:hover { color: #e8eaf6; border-color: #4f8ef7; }
+.btn-download {
+  background: linear-gradient(135deg, #4f8ef7, #7c4dff);
+  border: none; color: white; padding: 8px 14px;
+  border-radius: 8px; font-size: 13px; font-family: inherit; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; text-decoration: none;
+  transition: opacity .2s; white-space: nowrap; font-weight: 600;
+}
+.btn-download:hover { opacity: .88; }
+.btn-download.disabled {
+  background: #22253a; color: #8892b0; border: 1px solid #2e3250;
+  cursor: default; font-weight: 400;
+}
+
+/* ===== EMPTY ===== */
+.empty-state { text-align: center; padding: 56px 20px; color: #8892b0; }
+.empty-state i { font-size: 3rem; opacity: .18; display: block; margin-bottom: 14px; }
+.empty-state p { font-size: 15px; }
+
+/* ===== MODAL ===== */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.75); z-index: 200;
+  place-items: center; backdrop-filter: blur(4px);
+}
+.modal-overlay.active { display: grid; }
+.modal {
+  background: #1a1d27; border: 1px solid #2e3250;
+  border-radius: 16px; width: 90%; max-width: 580px;
+  max-height: 85vh; overflow-y: auto;
+  animation: fadeUp .25s ease;
+}
+@keyframes fadeUp {
+  from { opacity:0; transform:translateY(14px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+.modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 20px 24px; border-bottom: 1px solid #2e3250;
+}
+.modal-header h3 { font-size: 16px; font-weight: 700; }
+.modal-close { background: none; border: none; color: #8892b0; font-size: 18px; cursor: pointer; }
+.modal-close:hover { color: #ef4444; }
+.modal-body { padding: 24px; }
+.modal-footer {
+  padding: 16px 24px; border-top: 1px solid #2e3250;
+  display: flex; justify-content: flex-end; gap: 10px;
+}
+
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.detail-item label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .5px; color: #8892b0; display: block; margin-bottom: 3px;
+}
+.detail-item span { font-size: 14px; }
+.detail-full { grid-column: 1/-1; }
+
+.btn-close-modal {
+  background: #22253a; border: 1px solid #2e3250; color: #e8eaf6;
+  padding: 9px 20px; border-radius: 8px; font-size: 14px;
+  font-family: inherit; cursor: pointer; transition: border-color .2s;
+}
+.btn-close-modal:hover { border-color: #4f8ef7; }
+
+/* ===== LOADING ===== */
+.loading-pulse {
+  background: linear-gradient(90deg, #22253a 25%, #2e3250 50%, #22253a 75%);
+  background-size: 200% 100%; animation: pulse 1.5s infinite; border-radius: 10px;
+}
+@keyframes pulse { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+/* ===== TOAST ===== */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: #22253a; border: 1px solid #2e3250;
+  border-radius: 10px; padding: 13px 18px;
+  font-size: 14px; font-weight: 500; z-index: 300;
+  transform: translateY(80px); opacity: 0; transition: all .3s;
+  max-width: 340px; display: flex; align-items: center; gap: 10px;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.success { border-left: 4px solid #22c55e; }
+.toast.error   { border-left: 4px solid #ef4444; }
+.toast.info    { border-left: 4px solid #4f8ef7; }
+
+mark {
+  background: rgba(79,142,247,.28); color: #e8eaf6;
+  border-radius: 2px; padding: 0 2px;
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: #0f1117; }
+::-webkit-scrollbar-thumb { background: #2e3250; border-radius: 3px; }
+
+@media (max-width: 600px) {
+  .result-top { flex-direction: column; }
+  .result-actions { flex-direction: row; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .filters { flex-direction: column; }
+  .filter-sel { width: 100%; }
+  .hero h1 { font-size: 22px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div class="topbar">
+  <div class="brand-icon"><i class="fas fa-archive"></i></div>
+  <div class="brand-name">SIAP DINKES</div>
+  <span class="viewer-badge">👁️ Viewer</span>
+  <div class="user-chip">
+    <div class="user-av" id="userAv">?</div>
+    <span class="user-nm" id="userNm">—</span>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <div class="hero">
+    <h1>Cari <span>Arsip</span></h1>
+    <p>Temukan dan unduh dokumen arsip yang Anda butuhkan</p>
+  </div>
+
+  <div class="notice">
+    <i class="fas fa-info-circle"></i>
+    <span>Anda login sebagai <strong>Viewer</strong>. Hanya dapat <strong>mencari</strong> dan <strong>mengunduh</strong> arsip.</span>
+  </div>
+
+  <div class="search-card">
+    <div class="search-wrap">
+      <i class="fas fa-search"></i>
+      <input type="text" class="search-input" id="keyword"
+        placeholder="Cari judul, nomor, perihal, pengirim..."
+        onkeydown="if(event.key==='Enter') doSearch()">
+      <button class="btn-search" onclick="doSearch()">
+        <i class="fas fa-search"></i> Cari
+      </button>
+    </div>
+    <div class="filters">
+      <select class="filter-sel" id="fJenis">
+        <option value="">Semua Jenis</option>
+        <option>Surat Masuk</option><option>Surat Keluar</option>
+        <option>SK & Peraturan</option><option>Berita Acara</option>
+        <option>SPM</option><option>Pakta Integritas</option>
+        <option>Perjanjian Kinerja</option><option>Rencana Strategis</option>
+        <option>Rencana Kerja</option><option>RKA</option>
+        <option>DPA</option><option>Lainnya</option>
+      </select>
+      <select class="filter-sel" id="fKategori">
+        <option>Surat Masuk</option><option>Surat Keluar</option>
+        <option>SK & Peraturan</option><option>Berita Acara</option>
+        <option>SPM</option><option>Pakta Integritas</option>
+        <option>Perjanjian Kinerja</option><option>Rencana Strategis</option>
+        <option>Rencana Kerja</option><option>RKA</option>
+        <option>DPA</option><option>Lainnya</option>
+      </select>
+      <input type="number" class="filter-sel" id="fTahun"
+        placeholder="Tahun" min="2000" max="2099" style="width:100px">
+    </div>
+  </div>
+
+  <div id="results">
+    <div class="empty-state">
+      <i class="fas fa-search"></i>
+      <p>Masukkan kata kunci untuk mencari arsip</p>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Detail -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="modalTitle">Detail Arsip</h3>
+      <button class="modal-close" onclick="closeModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer">
+      <button class="btn-close-modal" onclick="closeModal()">Tutup</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+// ===== INIT =====
+window.onload = function () {
+  google.script.run
+    .withSuccessHandler(function (u) {
+      if (!u || !u.isLoggedIn) return;
+      document.getElementById('userAv').textContent = u.name.charAt(0).toUpperCase();
+      document.getElementById('userNm').textContent = u.name;
+    })
+    .getCurrentUser();
+};
+
+// ===== SEARCH =====
+function doSearch() {
+  var kw     = document.getElementById('keyword').value.trim();
+  var filter = {
+    jenisArsip: document.getElementById('fJenis').value,
+    kategori:   document.getElementById('fKategori').value,
+    tahun:      document.getElementById('fTahun').value
+  };
+
+  document.getElementById('results').innerHTML =
+    '<div class="loading-pulse" style="height:80px;margin-bottom:10px"></div>' +
+    '<div class="loading-pulse" style="height:80px;margin-bottom:10px"></div>' +
+    '<div class="loading-pulse" style="height:80px"></div>';
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res.success) { showToast('Gagal mencari: ' + res.message, 'error'); return; }
+      renderResults(res.data, kw, res.total);
+    })
+    .withFailureHandler(function (e) { showToast('Error: ' + e, 'error'); })
+    .cariArsip(kw, filter);
+}
+
+function renderResults(data, kw, total) {
+  if (!data || !data.length) {
+    document.getElementById('results').innerHTML =
+      '<div class="empty-state"><i class="fas fa-folder-open"></i>' +
+      '<p>Tidak ada arsip yang cocok dengan <strong>"' + esc(kw) + '"</strong></p></div>';
+    return;
+  }
+
+  var html = '<p class="result-meta">Ditemukan <strong>' + total +
+    '</strong> arsip' + (kw ? ' untuk kata kunci <strong>"' + esc(kw) + '"</strong>' : '') + '</p>';
+
+  data.forEach(function (r) {
+    var hasFile = r.fileUrl && r.fileUrl !== '';
+    html +=
+      '<div class="result-card">' +
+        '<div class="result-body">' +
+          '<div class="result-top">' +
+            '<div class="result-info">' +
+              '<div class="result-badges">' +
+                '<span class="b-id">' + r.id + '</span>' +
+                '<span class="badge ' + badgeCls(r.jenisArsip) + '">' + r.jenisArsip + '</span>' +
+                '<span class="badge ' + (r.status==='Aktif'?'b-aktif':'b-arsip') + '">' + r.status + '</span>' +
+              '</div>' +
+              '<div class="result-title">' + hl(r.judulArsip, kw) + '</div>' +
+              (r.perihal ? '<div class="result-perihal">' + hl(r.perihal, kw) + '</div>' : '') +
+              '<div class="result-meta-row">' +
+                '<span><i class="fas fa-calendar-alt"></i>' + r.tanggalArsip + '</span>' +
+                (r.pengirim ? '<span><i class="fas fa-user"></i>' + esc(r.pengirim) + '</span>' : '') +
+                (r.nomorArsip ? '<span><i class="fas fa-hashtag"></i>' + esc(r.nomorArsip) + '</span>' : '') +
+                '<span><i class="fas fa-tag"></i>' + r.kategori + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<div class="result-actions">' +
+              '<button class="btn-detail" onclick="lihatDetail(\'' + r.id + '\')">' +
+                '<i class="fas fa-info-circle"></i> Detail' +
+              '</button>' +
+              (hasFile
+                ? '<a class="btn-download" href="' + r.fileUrl + '" target="_blank">' +
+                    '<i class="fas fa-download"></i> Unduh' +
+                  '</a>'
+                : '<span class="btn-download disabled"><i class="fas fa-ban"></i> No File</span>'
+              ) +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  });
+
+  document.getElementById('results').innerHTML = html;
+}
+
+// ===== DETAIL MODAL =====
+function lihatDetail(id) {
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res.success) { showToast('Data tidak ditemukan', 'error'); return; }
+      var r = res.data;
+      document.getElementById('modalTitle').textContent = 'Detail — ' + r.id;
+      document.getElementById('modalBody').innerHTML =
+        '<div class="detail-grid">' +
+          '<div class="detail-item"><label>ID Arsip</label>' +
+            '<span style="font-family:\'JetBrains Mono\';color:#4f8ef7">' + r.id + '</span></div>' +
+          '<div class="detail-item"><label>Nomor Arsip</label><span>' + (r.nomorArsip||'—') + '</span></div>' +
+          '<div class="detail-item detail-full"><label>Judul Arsip</label>' +
+            '<span style="font-weight:700;font-size:16px">' + esc(r.judulArsip) + '</span></div>' +
+          '<div class="detail-item"><label>Jenis Arsip</label>' +
+            '<span class="badge ' + badgeCls(r.jenisArsip) + '">' + r.jenisArsip + '</span></div>' +
+          '<div class="detail-item"><label>Kategori</label><span>' + r.kategori + '</span></div>' +
+          '<div class="detail-item"><label>Tanggal Arsip</label><span>' + r.tanggalArsip + '</span></div>' +
+          '<div class="detail-item"><label>Status</label>' +
+            '<span class="badge ' + (r.status==='Aktif'?'b-aktif':'b-arsip') + '">' + r.status + '</span></div>' +
+          '<div class="detail-item"><label>Pengirim / Pembuat</label><span>' + (r.pengirim||'—') + '</span></div>' +
+          '<div class="detail-item"><label>Tujuan / Penerima</label><span>' + (r.tujuan||'—') + '</span></div>' +
+          '<div class="detail-item detail-full"><label>Perihal</label><span>' + (r.perihal||'—') + '</span></div>' +
+          '<div class="detail-item detail-full"><label>Keterangan</label>' +
+            '<span style="color:#8892b0">' + (r.keterangan||'—') + '</span></div>' +
+          (r.namaFile
+            ? '<div class="detail-item detail-full"><label>File Lampiran</label>' +
+                '<div style="display:flex;align-items:center;gap:10px;margin-top:6px">' +
+                  '<span style="color:#8892b0">' + esc(r.namaFile) + '</span>' +
+                  (r.fileUrl
+                    ? '<a class="btn-download" href="' + r.fileUrl + '" target="_blank" style="padding:7px 16px">' +
+                        '<i class="fas fa-download"></i> Unduh File</a>'
+                    : '') +
+                '</div></div>'
+            : '') +
+        '</div>';
+      document.getElementById('modalOverlay').classList.add('active');
+    })
+    .getArsipById(id);
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('active');
+}
+
+// ===== UTILS =====
+function badgeCls(j) {
+  if (!j) return 'b-other';
+  if (j.includes('Masuk'))  return 'b-masuk';
+  if (j.includes('Keluar')) return 'b-keluar';
+  return 'b-other';
+}
+function esc(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function hl(text, kw) {
+  if (!kw || !text) return esc(text||'');
+  var re = new RegExp('(' + kw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'gi');
+  return esc(text).replace(re, '<mark>$1</mark>');
+}
+
+var _tt;
+function showToast(msg, type) {
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast show ' + (type||'info');
+  clearTimeout(_tt); _tt = setTimeout(function(){ t.classList.remove('show'); }, 4000);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,628 @@
+// ============================================================
+// SISTEM DIGITALISASI ARSIP - Google Apps Script
+// File: Code.gs
+// Versi: 3.0.0 — Viewer hanya bisa Cari & Unduh
+// ============================================================
+
+const CONFIG = {
+  SPREADSHEET_ID: '',
+  FOLDER_ID: '',
+  SHEET_ARSIP:  'DataArsip',
+  SHEET_LOG:    'LogAktivitas',
+  SHEET_CONFIG: 'Konfigurasi',
+  SHEET_ADMIN:  'DaftarUser',
+  APP_NAME:     'SIAP DINKES',
+  VERSION:      '1.0.0'
+};
+
+// ============================================================
+// WEB APP ENTRY POINT
+// ============================================================
+
+function doGet(e) {
+  const token = (e && e.parameter && e.parameter.token) || '';
+
+  // Jika ada token valid → tampilkan halaman sesuai role yang tersimpan
+  if (token) {
+    const props = PropertiesService.getScriptProperties();
+    const raw   = props.getProperty('session_' + token);
+    if (raw) {
+      try {
+        const session = JSON.parse(raw);
+        const now     = new Date().getTime();
+        // Token berlaku 10 menit
+        if ((now - session.created) < 10 * 60 * 1000) {
+          if (session.role === 'admin') {
+            const tmpl   = HtmlService.createTemplateFromFile('Index');
+            tmpl.page    = 'dashboard';
+            tmpl.appName = CONFIG.APP_NAME;
+            return tmpl.evaluate()
+              .setTitle(CONFIG.APP_NAME)
+              .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+              .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+          } else {
+            const tmpl   = HtmlService.createTemplateFromFile('Viewer');
+            tmpl.appName = CONFIG.APP_NAME;
+            return tmpl.evaluate()
+              .setTitle(CONFIG.APP_NAME + ' — Pencarian Arsip')
+              .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+              .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+          }
+        }
+        // Token expired → hapus dan tampilkan login
+        props.deleteProperty('session_' + token);
+      } catch(e) {}
+    }
+  }
+
+  // Default → tampilkan halaman Login
+  return HtmlService.createTemplateFromFile('Login')
+    .evaluate()
+    .setTitle('Login — ' + CONFIG.APP_NAME)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+function getAppUrl() {
+  return ScriptApp.getService().getUrl();
+}
+
+// ============================================================
+// ENTRY POINT LOGIN — dipanggil dari Login.html via google.script.run
+// Membuat token sesi lalu mengembalikan URL redirect yang mengandung token
+// ============================================================
+function doLogin() {
+  let email = Session.getActiveUser().getEmail();
+  if (!email) email = Session.getEffectiveUser().getEmail();
+
+  if (!email) {
+    return {
+      success: false,
+      message: 'Akun Google tidak terdeteksi. Pastikan:\n• Sudah login Google di browser\n• Deployment: Execute as Me + Anyone with Google Account'
+    };
+  }
+
+  const role = getUserRole();
+
+  // Buat token unik dan simpan di PropertiesService
+  const token   = Utilities.getUuid();
+  const session = JSON.stringify({
+    email:   email,
+    role:    role,
+    created: new Date().getTime()
+  });
+  PropertiesService.getScriptProperties().setProperty('session_' + token, session);
+
+  // Kembalikan URL redirect dengan token
+  const url = ScriptApp.getService().getUrl() + '?token=' + token;
+  return {
+    success: true,
+    url:     url,
+    role:    role,
+    name:    email.split('@')[0]
+  };
+}
+
+// ============================================================
+// SETUP & INISIALISASI
+// ============================================================
+
+function setupSistem() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    let folder;
+    const folders = DriveApp.getFoldersByName('Arsip Digital');
+    folder = folders.hasNext() ? folders.next() : DriveApp.createFolder('Arsip Digital');
+
+    ['Surat Masuk','Surat Keluar','SK & Peraturan','Keuangan','Kepegawaian','Umum']
+      .forEach(name => { if (!folder.getFoldersByName(name).hasNext()) folder.createFolder(name); });
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    setupSheets(ss, folder.getId());
+
+    ui.alert('✅ Setup Berhasil!',
+      'Sistem telah dikonfigurasi.\nFolder Drive: ' + folder.getName() +
+      '\nID Folder: ' + folder.getId(), ui.ButtonSet.OK);
+  } catch (err) {
+    ui.alert('❌ Error Setup', err.toString(), ui.ButtonSet.OK);
+  }
+}
+
+function setupSheets(ss, folderId) {
+  // DataArsip
+  let sheet = ss.getSheetByName(CONFIG.SHEET_ARSIP);
+  if (!sheet) sheet = ss.insertSheet(CONFIG.SHEET_ARSIP);
+  if (sheet.getLastRow() === 0) {
+    const h = ['ID Arsip','Nomor Arsip','Judul Arsip','Jenis Arsip','Kategori',
+               'Tanggal Arsip','Tanggal Upload','Pengirim/Pembuat','Tujuan/Penerima',
+               'Perihal','Keterangan','Status','Nama File','ID File Drive','URL File',
+               'Diupload Oleh','Email Uploader'];
+    sheet.getRange(1,1,1,h.length).setValues([h])
+      .setBackground('#1a73e8').setFontColor('white').setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+
+  // LogAktivitas
+  let log = ss.getSheetByName(CONFIG.SHEET_LOG);
+  if (!log) log = ss.insertSheet(CONFIG.SHEET_LOG);
+  if (log.getLastRow() === 0) {
+    log.getRange(1,1,1,7).setValues([['Waktu','Aksi','ID Arsip','Nama Arsip','User','Email','Detail']])
+      .setBackground('#0d6efd').setFontColor('white').setFontWeight('bold');
+    log.setFrozenRows(1);
+  }
+
+  // DaftarUser
+  let admin = ss.getSheetByName(CONFIG.SHEET_ADMIN);
+  if (!admin) admin = ss.insertSheet(CONFIG.SHEET_ADMIN);
+  if (admin.getLastRow() === 0) {
+    admin.getRange(1,1,1,4).setValues([['Email','Role','Nama','Ditambahkan']])
+      .setBackground('#1a73e8').setFontColor('white').setFontWeight('bold');
+    const ownerEmail = Session.getActiveUser().getEmail();
+    admin.appendRow([ownerEmail, 'admin', ownerEmail.split('@')[0], new Date()]);
+    admin.setFrozenRows(1);
+  }
+
+  // Konfigurasi
+  let cfg = ss.getSheetByName(CONFIG.SHEET_CONFIG);
+  if (!cfg) cfg = ss.insertSheet(CONFIG.SHEET_CONFIG);
+  if (cfg.getLastRow() === 0) {
+    cfg.getRange('A1:A5').setValues([['Spreadsheet ID'],['Folder Drive ID'],['Tanggal Setup'],['Versi'],['Admin Email']]);
+    cfg.getRange('B1').setValue(ss.getId());
+    cfg.getRange('B2').setValue(folderId || '');
+    cfg.getRange('B3').setValue(new Date());
+    cfg.getRange('B4').setValue(CONFIG.VERSION);
+    cfg.getRange('B5').setValue(Session.getActiveUser().getEmail());
+    cfg.getRange('A1:A5').setFontWeight('bold');
+  } else if (folderId) {
+    cfg.getRange('B2').setValue(folderId);
+  }
+}
+
+// ============================================================
+// AUTENTIKASI & ROLE
+// ============================================================
+
+function getCurrentUser() {
+  const email = Session.getActiveUser().getEmail();
+  if (!email) return { isLoggedIn: false };
+  return { isLoggedIn: true, email, name: email.split('@')[0] };
+}
+
+function getUserRole() {
+  const email = Session.getActiveUser().getEmail();
+  if (!email) return 'guest';
+
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEET_ADMIN);
+  if (!sheet) return 'viewer';
+
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0].toString().toLowerCase() === email.toLowerCase()) {
+      return (data[i][1] || 'viewer').toString().toLowerCase();
+    }
+  }
+  return 'viewer';
+}
+
+function getCurrentUserWithRole() {
+  const email = Session.getActiveUser().getEmail();
+  if (!email) return { isLoggedIn: false };
+  const role = getUserRole();
+  return { isLoggedIn: true, email, name: email.split('@')[0], role, isAdmin: role === 'admin' };
+}
+
+function checkAccess() {
+  const email = Session.getActiveUser().getEmail();
+  if (!email) throw new Error('Anda harus login terlebih dahulu.');
+  return email;
+}
+
+function checkAdminAccess() {
+  const user = getCurrentUserWithRole();
+  if (!user.isLoggedIn) throw new Error('Anda harus login terlebih dahulu.');
+  if (!user.isAdmin)    throw new Error('Akses ditolak. Hanya Admin yang dapat melakukan aksi ini.');
+  return user.email;
+}
+
+// ============================================================
+// KELOLA USER (Admin Only)
+// ============================================================
+
+function getDaftarUser() {
+  checkAdminAccess();
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEET_ADMIN);
+  if (!sheet || sheet.getLastRow() <= 1) return { success: true, data: [] };
+  const data = sheet.getRange(2,1,sheet.getLastRow()-1,3).getValues();
+  return { success: true, data: data.map(r => ({ email: r[0], role: r[1], nama: r[2] })) };
+}
+
+function tambahUser(email, role, nama) {
+  checkAdminAccess();
+  if (!email) return { success: false, message: 'Email tidak boleh kosong.' };
+
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEET_ADMIN);
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0].toString().toLowerCase() === email.toLowerCase())
+      return { success: false, message: 'Email sudah terdaftar.' };
+  }
+  sheet.appendRow([email.toLowerCase(), role || 'viewer', nama || email.split('@')[0], new Date()]);
+  catatLog('TAMBAH_USER', '-', email, Session.getActiveUser().getEmail(), 'Ditambahkan sebagai ' + role);
+  return { success: true, message: 'User berhasil ditambahkan.' };
+}
+
+function hapusUser(email) {
+  checkAdminAccess();
+  const self  = Session.getActiveUser().getEmail();
+  if (email.toLowerCase() === self.toLowerCase())
+    return { success: false, message: 'Tidak bisa menghapus akun sendiri.' };
+
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEET_ADMIN);
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0].toString().toLowerCase() === email.toLowerCase()) {
+      sheet.deleteRow(i + 1);
+      catatLog('HAPUS_USER', '-', email, self, 'User dihapus');
+      return { success: true, message: 'User berhasil dihapus.' };
+    }
+  }
+  return { success: false, message: 'User tidak ditemukan.' };
+}
+
+// ============================================================
+// ARSIP — CREATE (Admin Only)
+// ============================================================
+
+function simpanArsip(data, fileData) {
+  try {
+    const email = checkAdminAccess();
+    const ss    = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CONFIG.SHEET_ARSIP);
+    const idArsip = 'ARS-' + new Date().getFullYear() + '-' +
+                    String(sheet.getLastRow()).padStart(5,'0');
+
+    let fileId = '', fileUrl = '', namaFile = '';
+    if (fileData && fileData.content) {
+      const res = uploadFileToDrive(fileData, data.kategori);
+      fileId = res.id; fileUrl = res.url; namaFile = res.name;
+    }
+
+    const now = new Date();
+    sheet.appendRow([
+      idArsip, data.nomorArsip||'', data.judulArsip, data.jenisArsip, data.kategori,
+      new Date(data.tanggalArsip), now, data.pengirim||'', data.tujuan||'',
+      data.perihal||'', data.keterangan||'', 'Aktif',
+      namaFile, fileId, fileUrl, email.split('@')[0], email
+    ]);
+    const lr = sheet.getLastRow();
+    sheet.getRange(lr,6).setNumberFormat('dd/mm/yyyy');
+    sheet.getRange(lr,7).setNumberFormat('dd/mm/yyyy hh:mm');
+
+    catatLog('TAMBAH', idArsip, data.judulArsip, email, 'Arsip baru ditambahkan');
+    return { success: true, id: idArsip, message: 'Arsip berhasil disimpan!' };
+  } catch (err) {
+    return { success: false, message: err.toString() };
+  }
+}
+
+function uploadFileToDrive(fileData, kategori) {
+  const targetFolder = getTargetFolder(kategori);
+  const blob = Utilities.newBlob(
+    Utilities.base64Decode(fileData.content), fileData.mimeType, fileData.name
+  );
+  const file = targetFolder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  Logger.log('File uploaded: ' + file.getName() + ' ke folder: ' + targetFolder.getName());
+  return { id: file.getId(), url: file.getUrl(), name: file.getName() };
+}
+
+function getTargetFolder(kategori) {
+  // Coba 1: ambil folder ID dari sheet Konfigurasi
+  try {
+    const ss  = SpreadsheetApp.getActiveSpreadsheet();
+    const cfg = ss.getSheetByName(CONFIG.SHEET_CONFIG);
+    if (cfg) {
+      const folderId = cfg.getRange('B2').getValue().toString().trim();
+      if (folderId) {
+        const mainFolder = DriveApp.getFolderById(folderId);
+        const subIter    = mainFolder.getFoldersByName(kategori);
+        if (subIter.hasNext()) return subIter.next();
+        // Subfolder tidak ada, buat otomatis
+        Logger.log('Subfolder ' + kategori + ' tidak ada, dibuat baru di: ' + mainFolder.getName());
+        return mainFolder.createFolder(kategori);
+      }
+    }
+  } catch (e) {
+    Logger.log('Gagal ambil folder dari Konfigurasi: ' + e.toString());
+  }
+
+  // Coba 2: cari folder "Arsip Digital" di Drive berdasarkan nama
+  try {
+    const byName = DriveApp.getFoldersByName('Arsip Digital');
+    if (byName.hasNext()) {
+      const mainFolder = byName.next();
+      // Simpan ID ke konfigurasi agar ke depannya langsung ketemu
+      try {
+        const ss  = SpreadsheetApp.getActiveSpreadsheet();
+        const cfg = ss.getSheetByName(CONFIG.SHEET_CONFIG);
+        if (cfg) cfg.getRange('B2').setValue(mainFolder.getId());
+      } catch(e2) {}
+      const subIter = mainFolder.getFoldersByName(kategori);
+      if (subIter.hasNext()) return subIter.next();
+      return mainFolder.createFolder(kategori);
+    }
+  } catch (e) {
+    Logger.log('Gagal cari folder by name: ' + e.toString());
+  }
+
+  // Coba 3: buat folder baru dari awal
+  try {
+    Logger.log('Membuat folder Arsip Digital baru...');
+    const newMain = DriveApp.createFolder('Arsip Digital');
+    try {
+      const ss  = SpreadsheetApp.getActiveSpreadsheet();
+      const cfg = ss.getSheetByName(CONFIG.SHEET_CONFIG);
+      if (cfg) cfg.getRange('B2').setValue(newMain.getId());
+    } catch(e2) {}
+    return newMain.createFolder(kategori);
+  } catch (e) {
+    Logger.log('Gagal buat folder baru: ' + e.toString());
+  }
+
+  // Fallback terakhir: Root Drive
+  return DriveApp.getRootFolder();
+}
+
+// Jalankan dari editor untuk debug: cek apakah folder ID tersimpan dengan benar
+function debugFolderSetup() {
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
+  const cfg = ss.getSheetByName(CONFIG.SHEET_CONFIG);
+  const folderId = cfg ? cfg.getRange('B2').getValue().toString().trim() : '';
+  let info = { folderId: folderId, folderName: '', subFolders: [], error: '' };
+  try {
+    if (folderId) {
+      const f    = DriveApp.getFolderById(folderId);
+      info.folderName = f.getName();
+      const subs = f.getFolders();
+      while (subs.hasNext()) info.subFolders.push(subs.next().getName());
+    } else {
+      info.error = 'Folder ID kosong di sheet Konfigurasi B2';
+    }
+  } catch(e) {
+    info.error = e.toString();
+  }
+  Logger.log(JSON.stringify(info, null, 2));
+  return info;
+}
+
+// ============================================================
+// ARSIP — READ (Admin + Viewer)
+// ============================================================
+
+function getSemuaArsip() {
+  try {
+    checkAccess();
+    const ss    = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CONFIG.SHEET_ARSIP);
+    if (!sheet || sheet.getLastRow() <= 1) return { success: true, data: [] };
+
+    const data = sheet.getRange(2,1,sheet.getLastRow()-1,17).getValues();
+    return {
+      success: true,
+      data: data.map((row,idx) => ({
+        row: idx+2, id: row[0], nomorArsip: row[1], judulArsip: row[2],
+        jenisArsip: row[3], kategori: row[4],
+        tanggalArsip: row[5] ? Utilities.formatDate(new Date(row[5]),'Asia/Jakarta','dd/MM/yyyy') : '',
+        tanggalUpload: row[6] ? Utilities.formatDate(new Date(row[6]),'Asia/Jakarta','dd/MM/yyyy HH:mm') : '',
+        pengirim: row[7], tujuan: row[8], perihal: row[9], keterangan: row[10],
+        status: row[11], namaFile: row[12], fileId: row[13], fileUrl: row[14],
+        uploadOleh: row[15], emailUploader: row[16]
+      }))
+    };
+  } catch (err) {
+    return { success: false, message: err.toString() };
+  }
+}
+
+// Cari arsip — tersedia untuk semua role yang login
+function cariArsip(keyword, filter) {
+  try {
+    checkAccess();
+    const result = getSemuaArsip();
+    if (!result.success) return result;
+
+    let data = result.data;
+    keyword = (keyword || '').toLowerCase().trim();
+
+    if (keyword) {
+      data = data.filter(r =>
+        (r.id          && r.id.toLowerCase().includes(keyword)) ||
+        (r.nomorArsip  && r.nomorArsip.toLowerCase().includes(keyword)) ||
+        (r.judulArsip  && r.judulArsip.toLowerCase().includes(keyword)) ||
+        (r.perihal     && r.perihal.toLowerCase().includes(keyword)) ||
+        (r.pengirim    && r.pengirim.toLowerCase().includes(keyword)) ||
+        (r.tujuan      && r.tujuan.toLowerCase().includes(keyword))
+      );
+    }
+    if (filter) {
+      if (filter.jenisArsip) data = data.filter(r => r.jenisArsip === filter.jenisArsip);
+      if (filter.kategori)   data = data.filter(r => r.kategori   === filter.kategori);
+      if (filter.tahun)      data = data.filter(r => r.tanggalArsip.includes(filter.tahun));
+    }
+    return { success: true, data, total: data.length };
+  } catch (err) {
+    return { success: false, message: err.toString() };
+  }
+}
+
+function getArsipById(idArsip) {
+  try {
+    checkAccess();
+    const result = getSemuaArsip();
+    if (!result.success) return result;
+    const arsip = result.data.find(r => r.id === idArsip);
+    return arsip ? { success: true, data: arsip } : { success: false, message: 'Arsip tidak ditemukan' };
+  } catch (err) {
+    return { success: false, message: err.toString() };
+  }
+}
+
+// ============================================================
+// ARSIP — UPDATE & DELETE (Admin Only)
+// ============================================================
+
+function updateStatusArsip(idArsip, status) {
+  try {
+    const email = checkAdminAccess();
+    const ss    = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CONFIG.SHEET_ARSIP);
+    const data  = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === idArsip) {
+        sheet.getRange(i+1,12).setValue(status);
+        catatLog('UPDATE', idArsip, data[i][2], email, 'Status → ' + status);
+        return { success: true, message: 'Status berhasil diperbarui' };
+      }
+    }
+    return { success: false, message: 'Arsip tidak ditemukan' };
+  } catch (err) {
+    return { success: false, message: err.toString() };
+  }
+}
+
+function hapusArsip(idArsip) {
+  try {
+    const email = checkAdminAccess();
+    const ss    = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CONFIG.SHEET_ARSIP);
+    const data  = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === idArsip) {
+        if (data[i][13]) { try { DriveApp.getFileById(data[i][13]).setTrashed(true); } catch(e){} }
+        catatLog('HAPUS', idArsip, data[i][2], email, 'Arsip dihapus');
+        sheet.deleteRow(i+1);
+        return { success: true, message: 'Arsip berhasil dihapus' };
+      }
+    }
+    return { success: false, message: 'Arsip tidak ditemukan' };
+  } catch (err) {
+    return { success: false, message: err.toString() };
+  }
+}
+
+// ============================================================
+// DASHBOARD & STATISTIK (Admin Only)
+// ============================================================
+
+function getStatistikDashboard() {
+  try {
+    checkAccess();
+    const result = getSemuaArsip();
+    if (!result.success) return result;
+
+    const data     = result.data;
+    const now      = new Date();
+    const tahunIni = now.getFullYear().toString();
+    const bulanIni = now.getMonth();
+
+    const stats = {
+      total:         data.length,
+      aktif:         data.filter(r => r.status === 'Aktif').length,
+      arsipTahunIni: data.filter(r => r.tanggalArsip.includes(tahunIni)).length,
+      bulanIni:      data.filter(r => {
+        if (!r.tanggalUpload) return false;
+        const p = r.tanggalUpload.split('/');
+        return p.length >= 2 && parseInt(p[1]) === (bulanIni+1) && p[2] && p[2].startsWith(tahunIni);
+      }).length
+    };
+
+    const perJenis    = {};
+    const perKategori = {};
+    data.forEach(r => {
+      perJenis[r.jenisArsip]  = (perJenis[r.jenisArsip]  || 0) + 1;
+      perKategori[r.kategori] = (perKategori[r.kategori] || 0) + 1;
+    });
+
+    const bln = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+    const perBulan = bln.map((b,i) => ({
+      bulan: b,
+      jumlah: data.filter(r => {
+        if (!r.tanggalArsip) return false;
+        const p = r.tanggalArsip.split('/');
+        return p.length >= 3 && parseInt(p[1]) === (i+1) && p[2] === tahunIni;
+      }).length
+    }));
+
+    return {
+      success: true,
+      stats, perJenis, perKategori, perBulan,
+      terbaru: data.slice(-5).reverse(),
+      user: getCurrentUserWithRole()
+    };
+  } catch (err) {
+    return { success: false, message: err.toString() };
+  }
+}
+
+// ============================================================
+// LOG
+// ============================================================
+
+function catatLog(aksi, idArsip, namaArsip, email, detail) {
+  try {
+    const ss  = SpreadsheetApp.getActiveSpreadsheet();
+    const log = ss.getSheetByName(CONFIG.SHEET_LOG);
+    if (log) log.appendRow([new Date(), aksi, idArsip, namaArsip, email.split('@')[0], email, detail]);
+  } catch(e) {}
+}
+
+function getLogAktivitas(limit) {
+  try {
+    checkAccess();
+    const ss  = SpreadsheetApp.getActiveSpreadsheet();
+    const log = ss.getSheetByName(CONFIG.SHEET_LOG);
+    if (!log || log.getLastRow() <= 1) return { success: true, data: [] };
+
+    const rows     = Math.min(log.getLastRow()-1, limit||50);
+    const startRow = Math.max(2, log.getLastRow()-rows+1);
+    const data     = log.getRange(startRow,1,rows,7).getValues();
+    return {
+      success: true,
+      data: data.reverse().map(r => ({
+        waktu:    r[0] ? Utilities.formatDate(new Date(r[0]),'Asia/Jakarta','dd/MM/yyyy HH:mm') : '',
+        aksi: r[1], idArsip: r[2], namaArsip: r[3], user: r[4], email: r[5], detail: r[6]
+      }))
+    };
+  } catch (err) {
+    return { success: false, message: err.toString() };
+  }
+}
+
+// ============================================================
+// MENU SPREADSHEET
+// ============================================================
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('🗂️ Arsip Digital')
+    .addItem('🚀 Setup Sistem', 'setupSistem')
+    .addSeparator()
+    .addItem('🌐 Buka Aplikasi Web', 'bukaAplikasi')
+    .addToUi();
+}
+
+function bukaAplikasi() {
+  const url  = ScriptApp.getService().getUrl();
+  const html = HtmlService.createHtmlOutput(
+    '<script>window.open("' + url + '"); google.script.host.close();<\/script>'
+  );
+  SpreadsheetApp.getUi().showModalDialog(html, 'Membuka Aplikasi...');
+}

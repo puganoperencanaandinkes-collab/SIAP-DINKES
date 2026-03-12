@@ -1,0 +1,810 @@
+<script>
+// ============================================================
+// SCRIPTS.HTML — Frontend JavaScript v2.0
+// ============================================================
+
+let allArsipData = [];
+let currentPage  = 'dashboard';
+let currentUser  = null;   // { email, name, role, isAdmin }
+
+// ===== INIT =====
+window.onload = function () {
+  loadUserInfo();
+  setupFileUpload();
+  initTahunRekap();
+  showPage('dashboard');
+};
+
+// ===== USER INFO & ROLE =====
+function loadUserInfo() {
+  google.script.run
+    .withSuccessHandler(function (user) {
+      if (!user || !user.isLoggedIn) return;
+      currentUser = user;
+
+      document.getElementById('userName').textContent  = user.name;
+      document.getElementById('userEmail').textContent = user.email;
+      document.getElementById('userAvatar').textContent = user.name.charAt(0).toUpperCase();
+
+      // Badge role di sidebar
+      var badge = document.getElementById('userRoleBadge');
+      if (user.isAdmin) {
+        badge.textContent = '👑 Admin';
+        badge.className   = 'role-badge role-admin';
+      } else {
+        badge.textContent = '👁️ Viewer';
+        badge.className   = 'role-badge role-viewer';
+      }
+
+      // Badge role di topbar
+      var topBadge = document.getElementById('topbarRoleBadge');
+      if (user.isAdmin) {
+        topBadge.textContent = '👑 Admin';
+        topBadge.className   = 'topbar-role role-badge role-admin';
+      } else {
+        topBadge.textContent = '👁️ Viewer';
+        topBadge.className   = 'topbar-role role-badge role-viewer';
+      }
+
+      // Tampilkan elemen khusus admin
+      applyRoleUI(user.isAdmin);
+
+      // Load dashboard setelah user info siap
+      loadDashboard();
+    })
+    .getCurrentUserWithRole();
+}
+
+function applyRoleUI(isAdmin) {
+  // Tampilkan menu & elemen admin-only
+  document.querySelectorAll('.admin-only').forEach(function (el) {
+    el.style.display = isAdmin ? '' : 'none';
+  });
+}
+
+// ===== NAVIGASI =====
+function showPage(page) {
+  document.querySelectorAll('.page').forEach(function (p) { p.classList.remove('active'); });
+  document.querySelectorAll('.nav-item').forEach(function (n) { n.classList.remove('active'); });
+
+  var el = document.getElementById('page-' + page);
+  if (el) el.classList.add('active');
+
+  // Highlight nav item
+  var navMap = { dashboard: 0, tambah: 1, daftar: 2, cari: 3, rekap: 4, log: 5 };
+  var navItems = document.querySelectorAll('.nav-item');
+
+  // Kalau admin, indeks berbeda karena menu tambah visible
+  if (currentUser && currentUser.isAdmin) {
+    var adminNavMap = { dashboard: 0, tambah: 1, daftar: 2, cari: 3, rekap: 5, log: 6, kelola: 8 };
+    if (adminNavMap[page] !== undefined && navItems[adminNavMap[page]]) {
+      navItems[adminNavMap[page]].classList.add('active');
+    }
+  } else {
+    var viewerNavMap = { dashboard: 0, daftar: 1, cari: 2, rekap: 4, log: 5 };
+    if (viewerNavMap[page] !== undefined && navItems[viewerNavMap[page]]) {
+      navItems[viewerNavMap[page]].classList.add('active');
+    }
+  }
+
+  var titles = {
+    dashboard: 'Dashboard', tambah: 'Tambah Arsip',
+    daftar: 'Daftar Arsip', cari: 'Cari Arsip',
+    rekap: 'Rekap Tahunan', log: 'Log Aktivitas', kelola: 'Kelola User'
+  };
+  document.getElementById('topbarTitle').textContent = titles[page] || 'Dashboard';
+  currentPage = page;
+
+  if (page === 'daftar') loadDaftarArsip();
+  if (page === 'rekap')  loadRekap();
+  if (page === 'log')    loadLog();
+  if (page === 'kelola') loadDaftarUser();
+
+  closeSidebar();
+}
+
+function refreshPage() {
+  if (currentPage === 'dashboard') loadDashboard();
+  else showPage(currentPage);
+}
+
+// ===== SIDEBAR MOBILE =====
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('overlay').classList.toggle('show');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('overlay').classList.remove('show');
+}
+
+// ===== DASHBOARD =====
+function loadDashboard() {
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result.success) { showToast('Gagal memuat dashboard', 'error'); return; }
+      renderStats(result.stats);
+      renderChartJenis(result.perJenis);
+      renderChartBulanan(result.perBulan);
+      renderTerbaru(result.terbaru);
+      document.getElementById('tahunChart').textContent = new Date().getFullYear();
+      if (result.user) {
+        document.getElementById('dashboardGreet').textContent =
+          'Selamat datang, ' + result.user.name + ' — ' +
+          (result.user.isAdmin ? 'Anda login sebagai Admin' : 'Anda login sebagai Viewer (read-only)');
+      }
+    })
+    .withFailureHandler(function (e) { showToast('Error: ' + e, 'error'); })
+    .getStatistikDashboard();
+}
+
+function renderStats(s) {
+  var items = [
+    { val: s.total,         label: 'Total Arsip',    sub: 'Semua arsip terdaftar', bg: 'rgba(79,142,247,.12)',  c: '#4f8ef7', ic: 'fa-folder-open' },
+    { val: s.aktif,         label: 'Arsip Aktif',    sub: 'Status aktif',          bg: 'rgba(34,197,94,.12)',   c: '#22c55e', ic: 'fa-check-circle' },
+    { val: s.arsipTahunIni, label: 'Tahun Ini',      sub: new Date().getFullYear(),bg: 'rgba(245,158,11,.12)',  c: '#f59e0b', ic: 'fa-calendar' },
+    { val: s.bulanIni,      label: 'Bulan Ini',      sub: 'Upload baru',           bg: 'rgba(124,77,255,.12)',  c: '#7c4dff', ic: 'fa-upload' }
+  ];
+  document.getElementById('statsGrid').innerHTML = items.map(function (it) {
+    return '<div class="stat-card">' +
+      '<div class="stat-icon" style="background:' + it.bg + '">' +
+        '<i class="fas ' + it.ic + '" style="color:' + it.c + '"></i></div>' +
+      '<div class="stat-value">' + it.val + '</div>' +
+      '<div class="stat-label">' + it.label + '</div>' +
+      '<div class="stat-sub"><i class="fas fa-info-circle"></i> ' + it.sub + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderChartJenis(perJenis) {
+  var colors = ['#4f8ef7','#7c4dff','#22c55e','#f59e0b','#ef4444','#06b6d4','#ec4899','#84cc16'];
+  var entries = Object.entries(perJenis);
+  var total   = entries.reduce(function (s, e) { return s + e[1]; }, 0);
+
+  if (!entries.length) {
+    document.getElementById('chartJenis').innerHTML =
+      '<div class="empty-state"><i class="fas fa-chart-pie"></i><p>Belum ada data</p></div>';
+    return;
+  }
+
+  entries.sort(function (a, b) { return b[1] - a[1]; });
+
+  // Donut SVG
+  var cx = 70, cy = 70, r = 55, circumference = 2 * Math.PI * r;
+  var svg = '<svg viewBox="0 0 140 140" style="width:130px;height:130px;display:block;margin:0 auto">' +
+    '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="var(--surface2)" stroke-width="20"/>';
+  var offset = 0;
+  entries.forEach(function (e, i) {
+    var frac = total ? e[1] / total : 0;
+    var dash = frac * circumference;
+    svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" ' +
+      'stroke="' + colors[i % colors.length] + '" stroke-width="20" ' +
+      'stroke-dasharray="' + dash + ' ' + (circumference - dash) + '" ' +
+      'stroke-dashoffset="' + (-offset * circumference) + '" ' +
+      'transform="rotate(-90 ' + cx + ' ' + cy + ')"/>';
+    offset += frac;
+  });
+  svg += '<text x="' + cx + '" y="' + (cy - 4) + '" text-anchor="middle" fill="var(--text)" ' +
+    'font-family="JetBrains Mono" font-size="17" font-weight="bold">' + total + '</text>' +
+    '<text x="' + cx + '" y="' + (cy + 13) + '" text-anchor="middle" fill="var(--muted)" font-size="9">TOTAL</text>' +
+    '</svg>';
+
+  var legend = '<div class="pie-legend">';
+  entries.forEach(function (e, i) {
+    var pct = total ? Math.round(e[1] / total * 100) : 0;
+    legend += '<div class="pie-item">' +
+      '<div class="pie-dot" style="background:' + colors[i % colors.length] + '"></div>' +
+      '<div class="pie-name">' + e[0] + '</div>' +
+      '<div class="pie-pct">' + pct + '%</div>' +
+      '<div class="pie-val">' + e[1] + '</div>' +
+    '</div>';
+  });
+  legend += '</div>';
+
+  document.getElementById('chartJenis').innerHTML = svg + legend;
+}
+
+function renderChartBulanan(perBulan) {
+  var maxVal = Math.max.apply(null, perBulan.map(function (b) { return b.jumlah; })) || 1;
+  var html = '<div class="bar-chart">';
+  perBulan.forEach(function (b) {
+    var h = Math.max((b.jumlah / maxVal) * 170, b.jumlah > 0 ? 6 : 0);
+    html += '<div class="bar-item">' +
+      '<div class="bar-fill" style="height:' + h + 'px" data-val="' + b.jumlah + '"></div>' +
+      '<div class="bar-label">' + b.bulan + '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+  document.getElementById('chartBulanan').innerHTML = html;
+}
+
+function renderTerbaru(data) {
+  if (!data || !data.length) {
+    document.getElementById('tabelTerbaru').innerHTML =
+      '<p style="text-align:center;color:var(--muted);padding:24px">Belum ada arsip</p>';
+    return;
+  }
+  var html = '<div class="table-responsive"><table class="data-table"><thead><tr>' +
+    '<th>ID</th><th>Judul</th><th>Jenis</th><th>Tanggal</th><th>Upload Oleh</th>' +
+    '</tr></thead><tbody>';
+  data.forEach(function (r) {
+    html += '<tr>' +
+      '<td><span style="font-family:\'JetBrains Mono\';font-size:11px;color:var(--accent)">' + r.id + '</span></td>' +
+      '<td><strong>' + esc(r.judulArsip) + '</strong></td>' +
+      '<td><span class="badge ' + getBadge(r.jenisArsip) + '">' + r.jenisArsip + '</span></td>' +
+      '<td>' + r.tanggalArsip + '</td>' +
+      '<td>' + r.uploadOleh + '</td>' +
+    '</tr>';
+  });
+  html += '</tbody></table></div>';
+  document.getElementById('tabelTerbaru').innerHTML = html;
+}
+
+// ===== TAMBAH ARSIP =====
+var selectedFile = null;
+
+function setupFileUpload() {
+  var zone  = document.getElementById('uploadZone');
+  var input = document.getElementById('fileInput');
+  if (!zone || !input) return;
+
+  zone.addEventListener('dragover', function (e) { e.preventDefault(); zone.style.borderColor = 'var(--accent)'; });
+  zone.addEventListener('dragleave', function () { zone.style.borderColor = ''; });
+  zone.addEventListener('drop', function (e) {
+    e.preventDefault(); zone.style.borderColor = '';
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+  input.addEventListener('change', function () { if (input.files[0]) handleFile(input.files[0]); });
+}
+
+function handleFile(file) {
+  if (file.size > 10 * 1024 * 1024) { showToast('Ukuran file melebihi 10MB!', 'error'); return; }
+  selectedFile = file;
+  var icons = { pdf:'📄', doc:'📝', docx:'📝', xls:'📊', xlsx:'📊', jpg:'🖼️', jpeg:'🖼️', png:'🖼️' };
+  var ext = file.name.split('.').pop().toLowerCase();
+  var preview = document.getElementById('filePreview');
+  preview.classList.remove('hidden');
+  preview.innerHTML =
+    '<span class="file-icon">' + (icons[ext] || '📎') + '</span>' +
+    '<div class="file-info"><div class="file-name">' + esc(file.name) + '</div>' +
+    '<div class="file-size">' + fmtSize(file.size) + '</div></div>' +
+    '<button class="file-remove" onclick="removeFile()"><i class="fas fa-times"></i></button>';
+  document.getElementById('uploadZone').style.display = 'none';
+}
+
+function removeFile() {
+  selectedFile = null;
+  document.getElementById('filePreview').classList.add('hidden');
+  document.getElementById('uploadZone').style.display = '';
+  document.getElementById('fileInput').value = '';
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+function submitArsip() {
+  var data = {
+    nomorArsip:   gv('nomorArsip'),
+    judulArsip:   gv('judulArsip'),
+    jenisArsip:   gv('jenisArsip'),
+    kategori:     gv('kategori'),
+    tanggalArsip: gv('tanggalArsip'),
+    pengirim:     gv('pengirim'),
+    tujuan:       gv('tujuan'),
+    perihal:      gv('perihal'),
+    keterangan:   gv('keterangan')
+  };
+
+  if (!data.judulArsip || !data.jenisArsip || !data.kategori || !data.tanggalArsip) {
+    showToast('Lengkapi field yang wajib diisi (*)', 'error'); return;
+  }
+
+  var btn = document.getElementById('btnSubmit');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Menyimpan...';
+
+  function send(fileData) {
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-save"></i> Simpan Arsip';
+        if (res.success) {
+          showToast('✅ ' + res.message + ' (ID: ' + res.id + ')', 'success');
+          resetForm(); loadDashboard();
+        } else {
+          showToast('❌ ' + res.message, 'error');
+        }
+      })
+      .withFailureHandler(function (e) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-save"></i> Simpan Arsip';
+        showToast('❌ ' + e, 'error');
+      })
+      .simpanArsip(data, fileData);
+  }
+
+  if (selectedFile) {
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      send({ name: selectedFile.name, content: e.target.result.split(',')[1], mimeType: selectedFile.type });
+    };
+    reader.readAsDataURL(selectedFile);
+  } else {
+    send(null);
+  }
+}
+
+function resetForm() {
+  ['nomorArsip','judulArsip','jenisArsip','kategori','tanggalArsip',
+   'pengirim','tujuan','perihal','keterangan'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  removeFile();
+}
+
+// ===== DAFTAR ARSIP =====
+function loadDaftarArsip() {
+  document.getElementById('bodyArsip').innerHTML =
+    '<tr><td colspan="9"><div class="loading-pulse" style="height:36px;border-radius:6px;margin:6px 0"></div></td></tr>';
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result.success) { showToast('Gagal memuat data', 'error'); return; }
+      allArsipData = result.data;
+      renderTabelArsip(allArsipData);
+    })
+    .withFailureHandler(function (e) { showToast('Error: ' + e, 'error'); })
+    .getSemuaArsip();
+}
+
+function filterDaftar() {
+  var kw     = gv('filterKeyword').toLowerCase();
+  var jenis  = gv('filterJenis');
+  var kat    = gv('filterKategori');
+  var status = gv('filterStatus');
+
+  var data = allArsipData.filter(function (r) {
+    return (!kw || matchKw(r, kw)) &&
+           (!jenis  || r.jenisArsip === jenis) &&
+           (!kat    || r.kategori   === kat) &&
+           (!status || r.status     === status);
+  });
+  renderTabelArsip(data);
+}
+
+function matchKw(r, kw) {
+  return (r.id          && r.id.toLowerCase().includes(kw)) ||
+         (r.nomorArsip  && r.nomorArsip.toLowerCase().includes(kw)) ||
+         (r.judulArsip  && r.judulArsip.toLowerCase().includes(kw)) ||
+         (r.perihal     && r.perihal.toLowerCase().includes(kw)) ||
+         (r.pengirim    && r.pengirim.toLowerCase().includes(kw));
+}
+
+function renderTabelArsip(data) {
+  document.getElementById('tableInfo').textContent =
+    'Menampilkan ' + data.length + ' arsip dari ' + allArsipData.length + ' total';
+
+  if (!data.length) {
+    document.getElementById('bodyArsip').innerHTML =
+      '<tr><td colspan="9" class="text-center" style="padding:40px;color:var(--muted)">Tidak ada data ditemukan</td></tr>';
+    return;
+  }
+
+  var isAdmin = currentUser && currentUser.isAdmin;
+
+  document.getElementById('bodyArsip').innerHTML = data.map(function (r) {
+    var aksiHapus = isAdmin
+      ? '<button class="tbl-btn danger" onclick="hapusArsipConfirm(\'' + r.id + '\',\'' + esc(r.judulArsip) + '\')" title="Hapus"><i class="fas fa-trash"></i></button>'
+      : '';
+    return '<tr>' +
+      '<td><span style="font-family:\'JetBrains Mono\';font-size:11px;color:var(--accent)">' + r.id + '</span></td>' +
+      '<td style="font-size:12px">' + (r.nomorArsip || '—') + '</td>' +
+      '<td><strong style="font-size:13px">' + esc(r.judulArsip) + '</strong>' +
+        (r.perihal ? '<div style="font-size:11px;color:var(--muted)">' + esc(r.perihal) + '</div>' : '') +
+      '</td>' +
+      '<td><span class="badge ' + getBadge(r.jenisArsip) + '">' + r.jenisArsip + '</span></td>' +
+      '<td style="font-size:12px;color:var(--muted)">' + r.kategori + '</td>' +
+      '<td style="font-size:12px;white-space:nowrap">' + r.tanggalArsip + '</td>' +
+      '<td><span class="badge badge-' + r.status.toLowerCase() + '">' + r.status + '</span></td>' +
+      '<td>' + (r.fileUrl
+        ? '<a href="' + r.fileUrl + '" target="_blank" class="tbl-btn" title="Buka File"><i class="fas fa-eye"></i></a>'
+        : '<span style="color:var(--muted);font-size:12px">—</span>') + '</td>' +
+      '<td>' +
+        '<button class="tbl-btn" onclick="lihatDetail(\'' + r.id + '\')" title="Detail"><i class="fas fa-info-circle"></i></button>' +
+        aksiHapus +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+// ===== CARI ARSIP =====
+function doSearch() {
+  var kw     = gv('searchKeyword');
+  var filter = { jenisArsip: gv('searchJenis'), kategori: gv('searchKategori'), tahun: gv('searchTahun') };
+
+  document.getElementById('searchResult').innerHTML =
+    '<div class="loading-pulse" style="height:80px;border-radius:10px"></div>';
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result.success) { showToast('Gagal mencari', 'error'); return; }
+      renderHasilCari(result.data, kw, result.total);
+    })
+    .withFailureHandler(function (e) { showToast('Error: ' + e, 'error'); })
+    .cariArsip(kw, filter);
+}
+
+function renderHasilCari(data, kw, total) {
+  if (!data || !data.length) {
+    document.getElementById('searchResult').innerHTML =
+      '<div class="empty-state"><i class="fas fa-search-minus"></i>' +
+      '<p>Tidak ada arsip yang cocok dengan <strong>"' + esc(kw) + '"</strong></p></div>';
+    return;
+  }
+
+  var html = '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">Ditemukan <strong style="color:var(--text)">' +
+    total + '</strong> arsip untuk <strong style="color:var(--text)">"' + esc(kw) + '"</strong></p>' +
+    '<div class="card" style="padding:0">';
+
+  var isAdmin = currentUser && currentUser.isAdmin;
+
+  data.forEach(function (r) {
+    html += '<div style="padding:16px 20px;border-bottom:1px solid rgba(46,50,80,.45)">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">' +
+        '<div style="flex:1">' +
+          '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:5px">' +
+            '<span style="font-family:\'JetBrains Mono\';font-size:11px;color:var(--accent)">' + r.id + '</span>' +
+            '<span class="badge ' + getBadge(r.jenisArsip) + '">' + r.jenisArsip + '</span>' +
+            '<span class="badge badge-' + r.status.toLowerCase() + '">' + r.status + '</span>' +
+          '</div>' +
+          '<div style="font-weight:700;font-size:15px;margin-bottom:4px">' + highlight(r.judulArsip, kw) + '</div>' +
+          (r.perihal ? '<div style="font-size:13px;color:var(--muted)">' + highlight(r.perihal, kw) + '</div>' : '') +
+          '<div style="font-size:12px;color:var(--muted);margin-top:6px">' +
+            '<i class="fas fa-calendar" style="margin-right:4px"></i>' + r.tanggalArsip +
+            (r.pengirim ? ' · <i class="fas fa-user" style="margin:0 4px"></i>' + esc(r.pengirim) : '') +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-shrink:0">' +
+          '<button class="tbl-btn" onclick="lihatDetail(\'' + r.id + '\')"><i class="fas fa-info-circle"></i></button>' +
+          (r.fileUrl ? '<a href="' + r.fileUrl + '" target="_blank" class="tbl-btn"><i class="fas fa-download"></i></a>' : '') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  });
+
+  html += '</div>';
+  document.getElementById('searchResult').innerHTML = html;
+}
+
+// ===== REKAP TAHUNAN =====
+function initTahunRekap() {
+  var sel = document.getElementById('tahunRekap');
+  if (!sel) return;
+  var now = new Date().getFullYear();
+  for (var y = now; y >= now - 9; y--) {
+    sel.innerHTML += '<option value="' + y + '">' + y + '</option>';
+  }
+}
+
+function loadRekap() {
+  var tahun = gv('tahunRekap') || String(new Date().getFullYear());
+  document.getElementById('rekapContent').innerHTML =
+    '<div class="loading-pulse" style="height:280px;border-radius:12px;margin-top:12px"></div>';
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result.success) return;
+      renderRekap(result.data.filter(function (r) { return r.tanggalArsip.includes(tahun); }), tahun);
+    })
+    .getSemuaArsip();
+}
+
+function renderRekap(data, tahun) {
+  var perBulan = {};
+  for (var m = 1; m <= 12; m++) perBulan[m] = 0;
+  data.forEach(function (r) {
+    var parts = r.tanggalArsip.split('/');
+    if (parts.length >= 2) perBulan[parseInt(parts[1])] = (perBulan[parseInt(parts[1])] || 0) + 1;
+  });
+
+  var perJenis = {}, perKategori = {};
+  data.forEach(function (r) {
+    perJenis[r.jenisArsip]   = (perJenis[r.jenisArsip]   || 0) + 1;
+    perKategori[r.kategori]  = (perKategori[r.kategori]  || 0) + 1;
+  });
+
+  var bulanNames = ['Januari','Februari','Maret','April','Mei','Juni',
+                    'Juli','Agustus','September','Oktober','November','Desember'];
+  var colors = ['#4f8ef7','#7c4dff','#22c55e','#f59e0b','#ef4444','#06b6d4','#ec4899'];
+
+  var html =
+    '<div class="rekap-grid">' +
+      '<div class="rekap-card"><div class="rekap-num" style="color:var(--accent)">' + data.length + '</div>' +
+        '<div class="rekap-label">Total Arsip ' + tahun + '</div></div>' +
+      '<div class="rekap-card"><div class="rekap-num" style="color:var(--success)">' +
+        data.filter(function(r){return r.status==='Aktif';}).length +
+        '</div><div class="rekap-label">Arsip Aktif</div></div>' +
+      '<div class="rekap-card"><div class="rekap-num" style="color:var(--warning)">' +
+        Object.keys(perJenis).length +
+        '</div><div class="rekap-label">Jenis Arsip</div></div>' +
+    '</div>' +
+    '<div class="card"><div class="card-header"><h3><i class="fas fa-table"></i> Detail Per Bulan — ' + tahun + '</h3></div>' +
+    '<div class="table-responsive"><table class="data-table"><thead>' +
+    '<tr><th>Bulan</th><th>Jumlah</th><th>%</th><th>Visualisasi</th></tr></thead><tbody>';
+
+  bulanNames.forEach(function (bln, i) {
+    var jml = perBulan[i + 1] || 0;
+    var pct = data.length ? Math.round(jml / data.length * 100) : 0;
+    html += '<tr><td><strong>' + bln + '</strong></td>' +
+      '<td><span style="font-family:\'JetBrains Mono\';font-size:15px;font-weight:700">' + jml + '</span></td>' +
+      '<td><span style="color:var(--muted)">' + pct + '%</span></td>' +
+      '<td><div style="background:var(--surface2);border-radius:4px;height:8px;min-width:120px">' +
+        '<div style="background:linear-gradient(90deg,var(--accent),var(--accent2));height:100%;border-radius:4px;width:' + pct + '%"></div>' +
+      '</div></td></tr>';
+  });
+
+  html += '</tbody></table></div></div>';
+
+  // Per Jenis & Kategori
+  html += '<div class="charts-grid">';
+
+  var renderPie = function (obj, title) {
+    var entries = Object.entries(obj).sort(function(a,b){return b[1]-a[1];});
+    var tot = entries.reduce(function(s,e){return s+e[1];},0);
+    var out = '<div class="chart-card"><div class="chart-header"><h3>' + title + '</h3></div><div class="pie-legend">';
+    entries.forEach(function(e,i){
+      out += '<div class="pie-item">' +
+        '<div class="pie-dot" style="background:' + colors[i % colors.length] + '"></div>' +
+        '<div class="pie-name">' + e[0] + '</div>' +
+        '<div class="pie-pct">' + (tot ? Math.round(e[1]/tot*100) : 0) + '%</div>' +
+        '<div class="pie-val">' + e[1] + '</div>' +
+      '</div>';
+    });
+    return out + '</div></div>';
+  };
+
+  html += renderPie(perJenis, 'Per Jenis Arsip');
+  html += renderPie(perKategori, 'Per Kategori');
+  html += '</div>';
+
+  document.getElementById('rekapContent').innerHTML = html;
+}
+
+function exportRekap() {
+  var tahun = gv('tahunRekap') || String(new Date().getFullYear());
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result.success) return;
+      var filtered = result.data.filter(function (r) { return r.tanggalArsip.includes(tahun); });
+      var headers  = ['ID Arsip','Nomor','Judul','Jenis','Kategori','Tanggal','Pengirim','Perihal','Status','File'];
+      var csv = headers.join(',') + '\n';
+      filtered.forEach(function (r) {
+        csv += [r.id, r.nomorArsip,
+          '"' + (r.judulArsip||'').replace(/"/g,'""') + '"',
+          r.jenisArsip, r.kategori, r.tanggalArsip,
+          '"' + (r.pengirim||'') + '"', '"' + (r.perihal||'') + '"',
+          r.status, r.namaFile || ''].join(',') + '\n';
+      });
+      var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'Rekap_Arsip_' + tahun + '.csv';
+      a.click();
+      showToast('Export CSV berhasil!', 'success');
+    })
+    .getSemuaArsip();
+}
+
+// ===== LOG =====
+function loadLog() {
+  document.getElementById('logContent').innerHTML =
+    '<div class="loading-pulse" style="height:180px;border-radius:8px"></div>';
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result.success || !result.data.length) {
+        document.getElementById('logContent').innerHTML =
+          '<p style="text-align:center;color:var(--muted);padding:40px">Belum ada log aktivitas</p>';
+        return;
+      }
+      var iconMap = {
+        TAMBAH:      'log-tambah fas fa-plus',
+        UPDATE:      'log-update fas fa-edit',
+        HAPUS:       'log-hapus fas fa-trash',
+        TAMBAH_USER: 'log-tambah fas fa-user-plus',
+        HAPUS_USER:  'log-hapus fas fa-user-minus'
+      };
+      var html = '';
+      result.data.forEach(function (l) {
+        var cls = (iconMap[l.aksi] || 'log-other fas fa-info').split(' ');
+        html += '<div class="log-item">' +
+          '<div class="log-icon ' + cls[0] + '"><i class="' + cls.slice(1).join(' ') + '"></i></div>' +
+          '<div class="log-content">' +
+            '<div class="log-title">' + l.aksi + ' — <span style="color:var(--accent)">' + l.idArsip + '</span></div>' +
+            '<div class="log-meta">' + (l.namaArsip||'—') + ' · ' + l.user + ' · ' + l.detail + '</div>' +
+          '</div>' +
+          '<div class="log-time">' + l.waktu + '</div>' +
+        '</div>';
+      });
+      document.getElementById('logContent').innerHTML = html;
+    })
+    .withFailureHandler(function (e) { showToast('Error: ' + e, 'error'); })
+    .getLogAktivitas(50);
+}
+
+// ===== KELOLA USER =====
+function loadDaftarUser() {
+  document.getElementById('tabelUser').innerHTML =
+    '<div class="loading-pulse" style="height:80px;border-radius:8px"></div>';
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result.success) { showToast('❌ ' + result.message, 'error'); return; }
+      if (!result.data.length) {
+        document.getElementById('tabelUser').innerHTML =
+          '<p style="text-align:center;color:var(--muted);padding:32px">Belum ada user terdaftar</p>';
+        return;
+      }
+      var html = '<div class="table-responsive"><table class="data-table"><thead>' +
+        '<tr><th>Email</th><th>Nama</th><th>Role</th><th>Aksi</th></tr></thead><tbody>';
+      result.data.forEach(function (u) {
+        var isAdm = u.role === 'admin';
+        html += '<tr>' +
+          '<td>' + esc(u.email) + '</td>' +
+          '<td>' + esc(u.nama) + '</td>' +
+          '<td><span class="role-badge ' + (isAdm ? 'role-admin' : 'role-viewer') + '">' +
+            (isAdm ? '👑 Admin' : '👁️ Viewer') + '</span></td>' +
+          '<td><button class="tbl-btn danger" onclick="hapusUserConfirm(\'' + esc(u.email) + '\')">' +
+            '<i class="fas fa-trash"></i></button></td>' +
+        '</tr>';
+      });
+      html += '</tbody></table></div>';
+      document.getElementById('tabelUser').innerHTML = html;
+    })
+    .withFailureHandler(function (e) { showToast('❌ ' + e, 'error'); })
+    .getDaftarUser();
+}
+
+function submitTambahUser() {
+  var email = gv('newUserEmail').trim();
+  var nama  = gv('newUserNama').trim();
+  var role  = gv('newUserRole');
+  if (!email) { showToast('Email wajib diisi!', 'error'); return; }
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      showToast(result.success ? '✅ ' + result.message : '❌ ' + result.message,
+                result.success ? 'success' : 'error');
+      if (result.success) {
+        document.getElementById('newUserEmail').value = '';
+        document.getElementById('newUserNama').value  = '';
+        loadDaftarUser();
+      }
+    })
+    .withFailureHandler(function (e) { showToast('❌ ' + e, 'error'); })
+    .tambahUser(email, role, nama);
+}
+
+function hapusUserConfirm(email) {
+  if (!confirm('Hapus akses user ' + email + '?')) return;
+  google.script.run
+    .withSuccessHandler(function (result) {
+      showToast(result.success ? '✅ ' + result.message : '❌ ' + result.message,
+                result.success ? 'success' : 'error');
+      if (result.success) loadDaftarUser();
+    })
+    .withFailureHandler(function (e) { showToast('❌ ' + e, 'error'); })
+    .hapusUser(email);
+}
+
+// ===== MODAL DETAIL =====
+function lihatDetail(id) {
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result.success) { showToast('Data tidak ditemukan', 'error'); return; }
+      var r = result.data;
+      var isAdmin = currentUser && currentUser.isAdmin;
+
+      document.getElementById('modalTitle').textContent = 'Detail Arsip — ' + r.id;
+      document.getElementById('modalBody').innerHTML =
+        '<div class="detail-grid">' +
+          '<div class="detail-item"><label>ID Arsip</label>' +
+            '<span style="font-family:\'JetBrains Mono\';color:var(--accent)">' + r.id + '</span></div>' +
+          '<div class="detail-item"><label>Nomor Arsip</label><span>' + (r.nomorArsip || '—') + '</span></div>' +
+          '<div class="detail-item detail-full"><label>Judul Arsip</label>' +
+            '<span style="font-weight:700;font-size:16px">' + esc(r.judulArsip) + '</span></div>' +
+          '<div class="detail-item"><label>Jenis Arsip</label>' +
+            '<span class="badge ' + getBadge(r.jenisArsip) + '">' + r.jenisArsip + '</span></div>' +
+          '<div class="detail-item"><label>Kategori</label><span>' + r.kategori + '</span></div>' +
+          '<div class="detail-item"><label>Tanggal Arsip</label><span>' + r.tanggalArsip + '</span></div>' +
+          '<div class="detail-item"><label>Status</label>' +
+            '<span class="badge badge-' + r.status.toLowerCase() + '">' + r.status + '</span></div>' +
+          '<div class="detail-item"><label>Pengirim / Pembuat</label><span>' + (r.pengirim || '—') + '</span></div>' +
+          '<div class="detail-item"><label>Tujuan / Penerima</label><span>' + (r.tujuan || '—') + '</span></div>' +
+          '<div class="detail-item detail-full"><label>Perihal</label><span>' + (r.perihal || '—') + '</span></div>' +
+          '<div class="detail-item detail-full"><label>Keterangan</label>' +
+            '<span style="color:var(--muted)">' + (r.keterangan || '—') + '</span></div>' +
+          '<div class="detail-item"><label>Tanggal Upload</label><span>' + r.tanggalUpload + '</span></div>' +
+          '<div class="detail-item"><label>Di-upload Oleh</label><span>' + r.uploadOleh + '</span></div>' +
+          (r.namaFile ? '<div class="detail-item detail-full"><label>File Lampiran</label>' +
+            '<div style="display:flex;gap:10px;align-items:center;margin-top:4px">' +
+              '<span style="color:var(--muted)">' + esc(r.namaFile) + '</span>' +
+              (r.fileUrl ? '<a href="' + r.fileUrl + '" target="_blank" class="btn-primary" style="padding:6px 14px;font-size:13px">' +
+                '<i class="fas fa-external-link-alt"></i> Buka File</a>' : '') +
+            '</div></div>' : '') +
+        '</div>' +
+        (isAdmin ?
+          '<div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">' +
+            '<button class="btn-secondary" onclick="ubahStatus(\'' + r.id + '\',\'Aktif\')">Aktifkan</button>' +
+            '<button class="btn-secondary" onclick="ubahStatus(\'' + r.id + '\',\'Arsip\')">Arsipkan</button>' +
+            '<button class="btn-secondary" style="color:var(--danger);border-color:var(--danger)" ' +
+              'onclick="hapusArsipConfirm(\'' + r.id + '\',\'' + esc(r.judulArsip) + '\');closeModal()">Hapus</button>' +
+          '</div>'
+        : '<div class="viewer-lock" style="margin-top:16px"><i class="fas fa-lock"></i> ' +
+          'Anda login sebagai Viewer. Tidak bisa mengubah data arsip.</div>');
+
+      document.getElementById('modalOverlay').classList.add('active');
+    })
+    .getArsipById(id);
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('active');
+}
+
+function ubahStatus(id, status) {
+  google.script.run
+    .withSuccessHandler(function (result) {
+      showToast(result.success ? '✅ Status diperbarui' : '❌ ' + result.message,
+                result.success ? 'success' : 'error');
+      if (result.success) { closeModal(); loadDaftarArsip(); }
+    })
+    .updateStatusArsip(id, status);
+}
+
+function hapusArsipConfirm(id, judul) {
+  if (!confirm('Hapus arsip "' + judul + '"?\n\nFile di Google Drive juga akan dihapus.')) return;
+  google.script.run
+    .withSuccessHandler(function (result) {
+      showToast(result.success ? '✅ Arsip dihapus' : '❌ ' + result.message,
+                result.success ? 'success' : 'error');
+      if (result.success) loadDaftarArsip();
+    })
+    .hapusArsip(id);
+}
+
+// ===== UTILS =====
+function getBadge(jenis) {
+  if (!jenis) return 'badge-sm-other';
+  if (jenis.includes('Masuk')) return 'badge-sm-masuk';
+  if (jenis.includes('Keluar')) return 'badge-sm-keluar';
+  return 'badge-sm-other';
+}
+
+function gv(id) { var el = document.getElementById(id); return el ? el.value : ''; }
+
+function esc(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function highlight(text, kw) {
+  if (!kw || !text) return esc(text || '');
+  var re = new RegExp('(' + kw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'gi');
+  return esc(text).replace(re,
+    '<mark style="background:rgba(79,142,247,.3);color:var(--text);border-radius:2px;padding:0 2px">$1</mark>');
+}
+
+var _toastTimer;
+function showToast(msg, type) {
+  type = type || 'info';
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function () { t.classList.remove('show'); }, 4000);
+}
+</script>
